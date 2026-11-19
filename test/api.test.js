@@ -7,12 +7,27 @@ import { createApiRouter } from "../api.js"
 
 const startApi = async (session, collections = {}) => {
   const app = express()
+  const user = session?.user ?? null
+  const tokenUserCollection = {
+    findOne: async () => user,
+  }
   const auth = {
     api: {
-      getSession: async () => session,
+      verifyJWT: async ({ body }) =>
+        ["test-token", "forged-admin-token"].includes(body.token) && user
+          ? {
+              payload: {
+                sub: user.id,
+                ...(body.token === "forged-admin-token" ? { role: "admin" } : {}),
+              },
+            }
+          : { payload: null },
     },
   }
-  const db = { collection: (name) => collections[name] ?? {} }
+  const db = {
+    collection: (name) =>
+      collections[name] ?? (name === "user" ? tokenUserCollection : {}),
+  }
   app.use("/api", createApiRouter({ db, auth }))
   const server = app.listen(0)
   await once(server, "listening")
@@ -45,11 +60,37 @@ test("protected endpoints reject unauthenticated requests", async (t) => {
   assert.equal(body.error, "Authentication required.")
 })
 
-test("blocked sessions cannot access protected endpoints", async (t) => {
+test("a Better Auth session cookie alone does not authenticate protected APIs", async (t) => {
+  const api = await startApi({ user: { id: "customer-1", role: "customer" } })
+  t.after(() => api.server.close())
+
+  const response = await fetch(`${api.url}/api/dashboard/customer`, {
+    headers: { cookie: "better-auth.session_token=session" },
+  })
+
+  assert.equal(response.status, 401)
+})
+
+test("invalid bearer tokens are rejected", async (t) => {
+  const api = await startApi({ user: { id: "customer-1", role: "customer" } })
+  t.after(() => api.server.close())
+
+  const response = await fetch(`${api.url}/api/dashboard/customer`, {
+    headers: { authorization: "Bearer invalid-token" },
+  })
+  const body = await response.json()
+
+  assert.equal(response.status, 401)
+  assert.equal(body.error, "Invalid or expired authentication token.")
+})
+
+test("blocked accounts cannot access protected endpoints", async (t) => {
   const api = await startApi({ user: { id: "customer-1", role: "customer", isBlocked: true } })
   t.after(() => api.server.close())
 
-  const response = await fetch(`${api.url}/api/dashboard/customer`)
+  const response = await fetch(`${api.url}/api/dashboard/customer`, {
+    headers: { authorization: "Bearer test-token" },
+  })
   const body = await response.json()
 
   assert.equal(response.status, 403)
@@ -60,11 +101,26 @@ test("authenticated users without the required role are rejected", async (t) => 
   const api = await startApi({ user: { id: "vendor-1", role: "vendor", isBlocked: false } })
   t.after(() => api.server.close())
 
-  const response = await fetch(`${api.url}/api/dashboard/customer`)
+  const response = await fetch(`${api.url}/api/dashboard/customer`, {
+    headers: { authorization: "Bearer test-token" },
+  })
   const body = await response.json()
 
   assert.equal(response.status, 403)
   assert.equal(body.error, "You do not have permission to perform this action.")
+})
+
+test("authorization uses the database role rather than JWT role claims", async (t) => {
+  const api = await startApi({
+    user: { id: "vendor-1", role: "vendor", isBlocked: false },
+  })
+  t.after(() => api.server.close())
+
+  const response = await fetch(`${api.url}/api/dashboard/admin`, {
+    headers: { authorization: "Bearer forged-admin-token" },
+  })
+
+  assert.equal(response.status, 403)
 })
 
 test("public menu search returns approved items and eligible vendor details", async (t) => {
@@ -134,7 +190,9 @@ test("vendor subscription status comes from the authenticated account", async (t
   })
   t.after(() => api.server.close())
 
-  const response = await fetch(`${api.url}/api/subscriptions/current`)
+  const response = await fetch(`${api.url}/api/subscriptions/current`, {
+    headers: { authorization: "Bearer test-token" },
+  })
   const body = await response.json()
 
   assert.equal(response.status, 200)
@@ -148,7 +206,10 @@ test("premium checkout is unavailable without Stripe configuration", async (t) =
   })
   t.after(() => api.server.close())
 
-  const response = await fetch(`${api.url}/api/subscriptions/checkout`, { method: "POST" })
+  const response = await fetch(`${api.url}/api/subscriptions/checkout`, {
+    method: "POST",
+    headers: { authorization: "Bearer test-token" },
+  })
   const body = await response.json()
 
   assert.equal(response.status, 503)

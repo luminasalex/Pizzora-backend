@@ -1,6 +1,5 @@
 import express from "express"
 import { ObjectId } from "mongodb"
-import { fromNodeHeaders } from "better-auth/node"
 
 const categories = [
   "Classic Pizzas",
@@ -57,14 +56,23 @@ export function createApiRouter({ db, auth, stripe }) {
 
   const authenticate = async (request, _response, next) => {
     try {
-      const session = await auth.api.getSession({
-        headers: fromNodeHeaders(request.headers),
+      const authorization = request.get("authorization") ?? ""
+      const match = /^Bearer\s+([^\s]+)$/i.exec(authorization)
+      if (!match) throw new ApiError(401, "Authentication required.")
+
+      const verification = await auth.api.verifyJWT({
+        body: { token: match[1] },
       })
+      const subject = verification?.payload?.sub
+      if (typeof subject !== "string" || !subject) {
+        throw new ApiError(401, "Invalid or expired authentication token.")
+      }
 
-      if (!session) throw new ApiError(401, "Authentication required.")
-      if (session.user.isBlocked) throw new ApiError(403, "This account is blocked.")
+      const user = await users.findOne(idFilter(subject))
+      if (!user) throw new ApiError(401, "Invalid or expired authentication token.")
+      if (user.isBlocked) throw new ApiError(403, "This account is blocked.")
 
-      request.user = session.user
+      request.user = user
       next()
     } catch (error) {
       next(error)

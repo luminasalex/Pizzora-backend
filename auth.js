@@ -2,11 +2,13 @@ import { MongoClient } from "mongodb"
 import { mongodbAdapter } from "@better-auth/mongo-adapter"
 import { betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
+import { jwt } from "better-auth/plugins"
 import "dotenv/config"
 import { meetsPasswordPolicy } from "./password-policy.js"
 
 const mongoUri = process.env.MONGODB_URI
 const authSecret = process.env.BETTER_AUTH_SECRET
+const authBaseURL = process.env.BETTER_AUTH_URL || "http://localhost:3001"
 
 if (!mongoUri) {
   throw new Error("MONGODB_URI is required to start the authentication service.")
@@ -23,7 +25,7 @@ const allowedSignupRoles = new Set(["customer", "vendor"])
 
 export const auth = betterAuth({
   appName: "Pizzora",
-  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3001",
+  baseURL: authBaseURL,
   secret: authSecret,
   trustedOrigins: (process.env.CLIENT_URL || "http://localhost:3000")
     .split(",")
@@ -51,6 +53,16 @@ export const auth = betterAuth({
       }
     }),
   },
+  plugins: [
+    jwt({
+      jwt: {
+        issuer: authBaseURL,
+        audience: "pizzora-api",
+        expirationTime: "10m",
+        definePayload: () => ({}),
+      },
+    }),
+  ],
   socialProviders:
     process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
       ? {

@@ -1,6 +1,6 @@
 # Pizzora API
 
-Express 5 API for Pizzora. It uses the MongoDB Native Driver and hosts Better Auth so that authentication, authorization, menu, order, profile, and subscription rules are enforced server-side.
+Express 5 API for Pizzora. It uses the MongoDB Native Driver and hosts Better Auth so that authentication, authorization, menu, order, profile, and subscription rules are enforced server-side. Better Auth's JWT plugin issues short-lived, signed access tokens; protected Express routes verify Bearer tokens and load current user roles and status from MongoDB.
 
 ## Requirements
 
@@ -46,12 +46,12 @@ npm run check
 | `STRIPE_PRICE_ID` | Stripe recurring Premium price |
 | `IMGBB_API_KEY` | Server-side ImgBB upload credential |
 
-Google OAuth's callback URL is `BETTER_AUTH_URL/api/auth/callback/google`. Add the exact callback URL to the Google OAuth client.
+Google OAuth's callback URL is `BETTER_AUTH_URL/api/auth/callback/google`. Add the exact callback URL to the Google OAuth client. JWT signing keys are stored and encrypted in MongoDB through Better Auth's `jwks` collection.
 
 ## API overview
 
 - `GET /health`
-- Better Auth: `/api/auth/*`
+- Better Auth: `/api/auth/*` (includes `/api/auth/token` for short-lived JWT issuance)
 - Public menu: `GET /api/menu-items`, `/api/menu-items/featured`, `/api/menu-items/:id`, `/api/categories`
 - Vendor menu: `GET /api/vendor/menu-items`, `POST/PATCH/DELETE /api/menu-items/*`
 - Menu review and user management: `/api/admin/*`
@@ -65,7 +65,7 @@ Menu query parameters include `search`, `category`, `location`, `sort=price_asc|
 
 ## Authorization and data
 
-Express reads the Better Auth session from the request cookie and gets the role and blocked state from the authoritative user record. Vendor ownership, order ownership, menu approval, free-plan limits, and subscription state are checked on the server. Admin accounts are not created through public registration; promote an existing account with:
+Protected Express routes require a valid Bearer JWT. The JWT plugin verifies its signature, expiration, issuer, and audience; Express then gets the role and blocked state from the authoritative user record rather than trusting JWT role claims. The token lifetime is ten minutes. Vendor ownership, order ownership, menu approval, free-plan limits, and subscription state are checked on the server. Admin accounts are not created through public registration; promote an existing account with:
 
 ```powershell
 npm run promote-admin -- owner@example.com
