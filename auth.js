@@ -4,9 +4,14 @@ import { betterAuth } from "better-auth"
 import "dotenv/config"
 
 const mongoUri = process.env.MONGODB_URI
+const authSecret = process.env.BETTER_AUTH_SECRET
 
 if (!mongoUri) {
   throw new Error("MONGODB_URI is required to start the authentication service.")
+}
+
+if (!authSecret || authSecret.length < 32) {
+  throw new Error("BETTER_AUTH_SECRET must be at least 32 characters long.")
 }
 
 export const mongoClient = new MongoClient(mongoUri)
@@ -17,7 +22,7 @@ const allowedSignupRoles = new Set(["customer", "vendor"])
 export const auth = betterAuth({
   appName: "Pizzora",
   baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3001",
-  secret: process.env.BETTER_AUTH_SECRET,
+  secret: authSecret,
   trustedOrigins: (process.env.CLIENT_URL || "http://localhost:3000")
     .split(",")
     .map((origin) => origin.trim())
