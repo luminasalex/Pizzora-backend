@@ -44,15 +44,14 @@ export function createStripeWebhookHandler({ db, stripeClient = stripe }) {
     }
 
     try {
-      const users = db.collection("user")
-      const transactions = db.collection("transactions")
-
       if (
         event.type === "checkout.session.completed" ||
         event.type === "checkout.session.async_payment_succeeded"
       ) {
         const checkout = event.data.object
         if (checkout.mode === "subscription") {
+          const users = db.collection("user")
+          const transactions = db.collection("transactions")
           const vendorId = checkout.metadata?.vendorId ?? checkout.client_reference_id
           const subscriptionId =
             typeof checkout.subscription === "string"
@@ -107,6 +106,7 @@ export function createStripeWebhookHandler({ db, stripeClient = stripe }) {
         const subscription = event.data.object
         const vendorId = subscription.metadata?.vendorId
         if (vendorId) {
+          const users = db.collection("user")
           const vendor = await users.findOne(userFilter(vendorId))
           if (vendor?.role === "vendor") {
             const active =
@@ -128,6 +128,7 @@ export function createStripeWebhookHandler({ db, stripeClient = stripe }) {
         }
       } else if (event.type === "checkout.session.async_payment_failed") {
         const checkout = event.data.object
+        const transactions = db.collection("transactions")
         await transactions.updateOne(
           { stripeSessionId: checkout.id },
           { $set: { status: "failed" } },
