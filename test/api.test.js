@@ -116,3 +116,36 @@ test("public menu search returns approved items and eligible vendor details", as
   assert.ok(menuFilter.itemName.test(item.itemName))
   assert.equal(menuFilter.category, "Classic Pizzas")
 })
+
+test("vendor subscription status comes from the authenticated account", async (t) => {
+  const api = await startApi({
+    user: {
+      id: "vendor-1",
+      role: "vendor",
+      isBlocked: false,
+      subscriptionPlan: "premium",
+      subscriptionExpiresAt: "2030-01-01T00:00:00.000Z",
+    },
+  })
+  t.after(() => api.server.close())
+
+  const response = await fetch(`${api.url}/api/subscriptions/current`)
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.data.plan, "premium")
+  assert.equal(body.data.expiresAt, "2030-01-01T00:00:00.000Z")
+})
+
+test("premium checkout is unavailable without Stripe configuration", async (t) => {
+  const api = await startApi({
+    user: { id: "vendor-1", role: "vendor", isBlocked: false, subscriptionPlan: "free" },
+  })
+  t.after(() => api.server.close())
+
+  const response = await fetch(`${api.url}/api/subscriptions/checkout`, { method: "POST" })
+  const body = await response.json()
+
+  assert.equal(response.status, 503)
+  assert.equal(body.error, "Premium checkout is not configured.")
+})

@@ -77,6 +77,7 @@ export function createStripeWebhookHandler({ db, stripeClient = stripe }) {
                     subscriptionPlan: "premium",
                     subscriptionExpiresAt: expiresAt,
                     stripeSubscriptionId: subscription.id,
+                    subscriptionCancelAtPeriodEnd: subscription.cancel_at_period_end,
                   },
                 },
               )
@@ -121,6 +122,9 @@ export function createStripeWebhookHandler({ db, stripeClient = stripe }) {
                     ? new Date(subscription.current_period_end * 1000)
                     : null,
                   stripeSubscriptionId: active ? subscription.id : null,
+                  subscriptionCancelAtPeriodEnd: active
+                    ? subscription.cancel_at_period_end
+                    : false,
                 },
               },
             )

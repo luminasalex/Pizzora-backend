@@ -77,6 +77,17 @@ export const auth = betterAuth({
         required: false,
         input: false,
       },
+      stripeSubscriptionId: {
+        type: "string",
+        required: false,
+        input: false,
+      },
+      subscriptionCancelAtPeriodEnd: {
+        type: "boolean",
+        required: false,
+        defaultValue: false,
+        input: false,
+      },
     },
   },
   databaseHooks: {
@@ -94,6 +105,7 @@ export const auth = betterAuth({
                 : undefined,
             isBlocked: false,
             subscriptionPlan: "free",
+            subscriptionCancelAtPeriodEnd: false,
           },
         }),
       },

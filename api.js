@@ -135,6 +135,9 @@ export function createApiRouter({ db, auth, stripe }) {
   })
 
   router.patch("/users/profile", authenticate, async (request, response) => {
+    if (!["customer", "vendor"].includes(request.user.role)) {
+      throw new ApiError(403, "Administrator profiles cannot be edited here.")
+    }
     const updates = {}
     const { name, image, businessName } = request.body ?? {}
     if (name !== undefined) {
@@ -706,6 +709,7 @@ export function createApiRouter({ db, auth, stripe }) {
       data: {
         plan: request.user.subscriptionPlan || "free",
         expiresAt: request.user.subscriptionExpiresAt ?? null,
+        cancelAtPeriodEnd: request.user.subscriptionCancelAtPeriodEnd ?? false,
       },
     })
   })
@@ -739,6 +743,29 @@ export function createApiRouter({ db, auth, stripe }) {
     })
 
     response.json({ data: { url: checkout.url } })
+  })
+
+  router.post("/subscriptions/cancel", ...requireRole("vendor"), async (request, response) => {
+    if (!stripe) throw new ApiError(503, "Subscription management is not configured.")
+    if (
+      request.user.subscriptionPlan !== "premium" ||
+      !request.user.stripeSubscriptionId
+    ) {
+      throw new ApiError(409, "There is no active Premium subscription to cancel.")
+    }
+
+    const subscription = await stripe.subscriptions.update(
+      request.user.stripeSubscriptionId,
+      { cancel_at_period_end: true },
+    )
+    response.json({
+      data: {
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+        expiresAt: subscription.current_period_end
+          ? new Date(subscription.current_period_end * 1000)
+          : null,
+      },
+    })
   })
 
   router.get("/admin/users", ...requireRole("admin"), async (request, response) => {
