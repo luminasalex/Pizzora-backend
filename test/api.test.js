@@ -70,7 +70,12 @@ test("authenticated users without the required role are rejected", async (t) => 
 test("public menu search returns approved items and eligible vendor details", async (t) => {
   const itemId = new ObjectId()
   let menuFilter
-  const vendor = { id: "vendor-1", name: "Pizzora Kitchen", role: "vendor" }
+  const vendor = {
+    id: "vendor-1",
+    name: "Restaurant Owner",
+    businessName: "Pizzora Kitchen",
+    role: "vendor",
+  }
   const item = {
     _id: itemId,
     itemName: "Pepperoni Pizza",
@@ -110,7 +115,7 @@ test("public menu search returns approved items and eligible vendor details", as
 
   assert.equal(response.status, 200)
   assert.equal(body.data[0].itemName, item.itemName)
-  assert.equal(body.data[0].vendor.name, vendor.name)
+  assert.equal(body.data[0].vendor.name, vendor.businessName)
   assert.equal(menuFilter.status, "approved")
   assert.equal(menuFilter.availability, true)
   assert.ok(menuFilter.itemName.test(item.itemName))

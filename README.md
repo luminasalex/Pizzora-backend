@@ -1,0 +1,92 @@
+# Pizzora API
+
+Express 5 API for Pizzora. It uses the MongoDB Native Driver and hosts Better Auth so that authentication, authorization, menu, order, profile, and subscription rules are enforced server-side.
+
+## Requirements
+
+- Node.js 20 or newer
+- MongoDB Atlas or another MongoDB deployment
+- Optional: Google OAuth, Stripe Billing, and ImgBB credentials
+
+## Local development
+
+```powershell
+npm ci
+Copy-Item .env.example .env
+npm run dev
+```
+
+Set `MONGODB_URI`, a strong `BETTER_AUTH_SECRET` (at least 32 characters), and the client/API origins before starting. Generate a secret with:
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Run checks:
+
+```powershell
+npm test
+npm run check
+```
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Express listening port; defaults to `3001` |
+| `NODE_ENV` | Enables secure cross-origin cookies in production |
+| `CLIENT_URL` | Comma-separated allowed frontend origins |
+| `BETTER_AUTH_URL` | Public origin of this API and Better Auth |
+| `BETTER_AUTH_SECRET` | Better Auth signing/encryption secret; keep private |
+| `MONGODB_URI` | MongoDB connection string; keep private |
+| `DB_NAME` | MongoDB database name; defaults to `Pizzora` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional Google OAuth credentials |
+| `STRIPE_SECRET_KEY` | Stripe server-side API key |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
+| `STRIPE_PRICE_ID` | Stripe recurring Premium price |
+| `IMGBB_API_KEY` | Server-side ImgBB upload credential |
+
+Google OAuth's callback URL is `BETTER_AUTH_URL/api/auth/callback/google`. Add the exact callback URL to the Google OAuth client.
+
+## API overview
+
+- `GET /health`
+- Better Auth: `/api/auth/*`
+- Public menu: `GET /api/menu-items`, `/api/menu-items/featured`, `/api/menu-items/:id`, `/api/categories`
+- Vendor menu: `GET /api/vendor/menu-items`, `POST/PATCH/DELETE /api/menu-items/*`
+- Menu review and user management: `/api/admin/*`
+- Orders: `POST /api/orders`, `GET /api/orders/my-orders`, `GET /api/vendor/orders`, `PATCH /api/orders/:id/:action`
+- Profile and image uploads: `PATCH /api/users/profile`, `POST /api/uploads/images`
+- Dashboards: `/api/dashboard/customer`, `/api/dashboard/vendor`, `/api/dashboard/admin`
+- Vendor subscriptions: `/api/subscriptions/current`, `/api/subscriptions/checkout`, `/api/subscriptions/cancel`
+- Stripe webhook: `POST /api/webhooks/stripe`
+
+Menu query parameters include `search`, `category`, `location`, `sort=price_asc|price_desc`, `page`, and `limit`. Only approved and available items from non-blocked vendors are returned publicly.
+
+## Authorization and data
+
+Express reads the Better Auth session from the request cookie and gets the role and blocked state from the authoritative user record. Vendor ownership, order ownership, menu approval, free-plan limits, and subscription state are checked on the server. Admin accounts are not created through public registration; promote an existing account with:
+
+```powershell
+npm run promote-admin -- owner@example.com
+```
+
+Better Auth manages its user, session, account, and verification storage. Business data uses `menuItems`, `orders`, and `transactions`; `webhookEvents` stores Stripe event IDs for idempotent webhook handling.
+
+The order duplicate guard uses a unique sparse `activeOrderKey` index. Stripe subscriptions activate only after a signed webhook verifies payment; checkout redirect pages never grant Premium access.
+
+## Stripe local webhook
+
+Configure `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. For local testing with the Stripe CLI:
+
+```powershell
+stripe listen --forward-to localhost:3001/api/webhooks/stripe
+```
+
+Copy the CLI's webhook signing secret to `.env`. Customer pizza orders do not use Stripe Checkout.
+
+## Deployment
+
+Deploy the API to Render or another Node.js host. Configure MongoDB network access, production `CLIENT_URL` and `BETTER_AUTH_URL`, OAuth callback origins, Stripe webhook URL (`/api/webhooks/stripe`), and the server-only ImgBB key. Use a same-site domain or reverse proxy for reliable auth cookies.
+
+Do not commit `.env` or publish server credentials.

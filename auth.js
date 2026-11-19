@@ -1,7 +1,9 @@
 import { MongoClient } from "mongodb"
 import { mongodbAdapter } from "@better-auth/mongo-adapter"
 import { betterAuth } from "better-auth"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import "dotenv/config"
+import { meetsPasswordPolicy } from "./password-policy.js"
 
 const mongoUri = process.env.MONGODB_URI
 const authSecret = process.env.BETTER_AUTH_SECRET
@@ -37,6 +39,17 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+  },
+  hooks: {
+    before: createAuthMiddleware(async (context) => {
+      if (context.path !== "/sign-up/email") return
+      const password = context.body?.password
+      if (!meetsPasswordPolicy(password)) {
+        throw new APIError("BAD_REQUEST", {
+          message: "Password must include at least one uppercase and one lowercase letter.",
+        })
+      }
+    }),
   },
   socialProviders:
     process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET

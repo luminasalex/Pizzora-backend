@@ -19,6 +19,14 @@ class ApiError extends Error {
 }
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const isHttpsUrl = (value) => {
+  if (typeof value !== "string") return false
+  try {
+    return new URL(value).protocol === "https:"
+  } catch {
+    return false
+  }
+}
 const idFilter = (id) => {
   const clauses = [{ _id: id }, { id }]
   if (ObjectId.isValid(id)) clauses.push({ _id: new ObjectId(id) })
@@ -77,11 +85,19 @@ export function createApiRouter({ db, auth, stripe }) {
   const listEligibleVendors = async () => {
     const records = await users
       .find({ role: "vendor", isBlocked: { $ne: true } })
-      .project({ name: 1, image: 1, subscriptionPlan: 1, _id: 1, id: 1 })
+      .project({
+        name: 1,
+        businessName: 1,
+        image: 1,
+        subscriptionPlan: 1,
+        _id: 1,
+        id: 1,
+      })
       .toArray()
     return records.map((vendor) => ({
       ...vendor,
       id: documentId(vendor),
+      name: vendor.businessName || vendor.name,
     }))
   }
 
@@ -102,19 +118,24 @@ export function createApiRouter({ db, auth, stripe }) {
       vendorIds.length
         ? users
             .find({ $or: vendorIds.map((id) => idFilter(id)) })
-            .project({ name: 1, image: 1, _id: 1, id: 1 })
+            .project({ name: 1, businessName: 1, image: 1, _id: 1, id: 1 })
             .toArray()
         : [],
       customerIds.length
         ? users
             .find({ $or: customerIds.map((id) => idFilter(id)) })
-            .project({ name: 1, email: 1, _id: 1, id: 1 })
+            .project({ name: 1, businessName: 1, email: 1, _id: 1, id: 1 })
             .toArray()
         : [],
     ])
 
     const itemById = new Map(items.map((item) => [String(item._id), item]))
-    const vendorById = new Map(vendorRecords.map((vendor) => [documentId(vendor), vendor]))
+    const vendorById = new Map(
+      vendorRecords.map((vendor) => [
+        documentId(vendor),
+        { ...vendor, name: vendor.businessName || vendor.name },
+      ]),
+    )
     const customerById = new Map(
       customerRecords.map((customer) => [documentId(customer), customer]),
     )
@@ -147,12 +168,8 @@ export function createApiRouter({ db, auth, stripe }) {
       updates.name = name.trim()
     }
     if (image !== undefined) {
-      if (image !== null) {
-        try {
-          if (new URL(image).protocol !== "https:") throw new Error("Invalid image URL.")
-        } catch {
-          throw new ApiError(400, "Profile image must be a valid HTTPS URL.")
-        }
+      if (image !== null && !isHttpsUrl(image)) {
+        throw new ApiError(400, "Profile image must be a valid HTTPS URL.")
       }
       updates.image = image
     }
@@ -330,7 +347,11 @@ export function createApiRouter({ db, auth, stripe }) {
     response.json({
       data: {
         ...safeMenuItem(item),
-        vendor: { id: documentId(vendor), name: vendor.name, image: vendor.image },
+        vendor: {
+          id: documentId(vendor),
+          name: vendor.businessName || vendor.name,
+          image: vendor.image,
+        },
       },
     })
   })
@@ -363,13 +384,7 @@ export function createApiRouter({ db, auth, stripe }) {
       location.trim().length > 120 ||
       imageList.length < 1 ||
       imageList.length > 5 ||
-      imageList.some((image) => {
-        try {
-          return new URL(image).protocol !== "https:"
-        } catch {
-          return true
-        }
-      })
+      imageList.some((image) => !isHttpsUrl(image))
     ) {
       throw new ApiError(400, "Please provide valid menu item details and HTTPS image URLs.")
     }
@@ -419,7 +434,13 @@ export function createApiRouter({ db, auth, stripe }) {
     if ("location" in updates && (typeof updates.location !== "string" || !updates.location.trim() || updates.location.length > 120)) {
       throw new ApiError(400, "Invalid menu item location.")
     }
-    if ("images" in updates && (!Array.isArray(updates.images) || updates.images.length < 1 || updates.images.length > 5)) {
+    if (
+      "images" in updates &&
+      (!Array.isArray(updates.images) ||
+        updates.images.length < 1 ||
+        updates.images.length > 5 ||
+        updates.images.some((image) => !isHttpsUrl(image)))
+    ) {
       throw new ApiError(400, "Provide between 1 and 5 menu item images.")
     }
 
@@ -427,6 +448,7 @@ export function createApiRouter({ db, auth, stripe }) {
     if ("description" in updates) updates.description = updates.description.trim()
     if ("location" in updates) updates.location = updates.location.trim()
     if ("price" in updates) updates.price = Number(updates.price)
+    updates.status = "pending"
     updates.updatedAt = new Date()
     const result = await menuItems.findOneAndUpdate(
       { _id: new ObjectId(request.params.id), vendorId: request.user.id },
