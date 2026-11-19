@@ -7,7 +7,7 @@ import { createApiRouter } from "./api.js"
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
-const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5000")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean)
