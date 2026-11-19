@@ -55,6 +55,11 @@ export const auth = betterAuth({
         defaultValue: "customer",
         input: true,
       },
+      businessName: {
+        type: "string",
+        required: false,
+        input: true,
+      },
       isBlocked: {
         type: "boolean",
         required: false,
@@ -81,6 +86,12 @@ export const auth = betterAuth({
           data: {
             ...user,
             role: allowedSignupRoles.has(user.role) ? user.role : "customer",
+            businessName:
+              user.role === "vendor" &&
+              typeof user.businessName === "string" &&
+              user.businessName.trim().length <= 120
+                ? user.businessName.trim()
+                : undefined,
             isBlocked: false,
             subscriptionPlan: "free",
           },

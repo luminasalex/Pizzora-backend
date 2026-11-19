@@ -45,6 +45,7 @@ export function createApiRouter({ db, auth, stripe }) {
   const menuItems = db.collection("menuItems")
   const orders = db.collection("orders")
   const transactions = db.collection("transactions")
+  const uploadWindows = new Map()
 
   const authenticate = async (request, _response, next) => {
     try {
@@ -132,6 +133,98 @@ export function createApiRouter({ db, auth, stripe }) {
   router.get("/users/me", authenticate, (request, response) => {
     response.json({ user: request.user })
   })
+
+  router.patch("/users/profile", authenticate, async (request, response) => {
+    const updates = {}
+    const { name, image, businessName } = request.body ?? {}
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 80) {
+        throw new ApiError(400, "Name must be between 2 and 80 characters.")
+      }
+      updates.name = name.trim()
+    }
+    if (image !== undefined) {
+      if (image !== null) {
+        try {
+          if (new URL(image).protocol !== "https:") throw new Error("Invalid image URL.")
+        } catch {
+          throw new ApiError(400, "Profile image must be a valid HTTPS URL.")
+        }
+      }
+      updates.image = image
+    }
+    if (businessName !== undefined) {
+      if (
+        request.user.role !== "vendor" ||
+        typeof businessName !== "string" ||
+        businessName.trim().length < 2 ||
+        businessName.trim().length > 120
+      ) {
+        throw new ApiError(400, "Restaurant name must be between 2 and 120 characters.")
+      }
+      updates.businessName = businessName.trim()
+    }
+    if (!Object.keys(updates).length) {
+      throw new ApiError(400, "No editable profile fields were provided.")
+    }
+
+    const user = await users.findOne(idFilter(request.user.id))
+    if (!user) throw new ApiError(404, "User profile not found.")
+    updates.updatedAt = new Date()
+    await users.updateOne({ _id: user._id }, { $set: updates })
+    response.json({
+      data: {
+        ...request.user,
+        ...updates,
+        updatedAt: undefined,
+      },
+    })
+  })
+
+  router.post(
+    "/uploads/images",
+    ...requireRole("customer", "vendor"),
+    async (request, response) => {
+      const now = Date.now()
+      const window = uploadWindows.get(request.user.id)
+      if (window && now - window.start < 60_000 && window.count >= 10) {
+        throw new ApiError(429, "Too many image uploads. Try again in a minute.")
+      }
+      uploadWindows.set(
+        request.user.id,
+        window && now - window.start < 60_000
+          ? { start: window.start, count: window.count + 1 }
+          : { start: now, count: 1 },
+      )
+
+      const apiKey = process.env.IMGBB_API_KEY
+      const image = request.body?.image
+      if (!apiKey) throw new ApiError(503, "Image uploads are not configured.")
+      if (
+        typeof image !== "string" ||
+        image.length > 5_600_000 ||
+        !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(image)
+      ) {
+        throw new ApiError(400, "Provide a JPEG, PNG, or WebP image smaller than 4 MB.")
+      }
+
+      const form = new FormData()
+      form.append("image", image.slice(image.indexOf(",") + 1))
+      const uploadUrl = new URL("https://api.imgbb.com/1/upload")
+      uploadUrl.searchParams.set("key", apiKey)
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(20_000),
+      })
+      const result = await uploadResponse.json()
+      if (!uploadResponse.ok || result?.success !== true || typeof result?.data?.url !== "string") {
+        throw new ApiError(502, "The image hosting service could not accept this image.")
+      }
+
+      response.status(201).json({ data: { url: result.data.url } })
+    },
+  )
 
   router.get("/categories", (_request, response) => {
     response.json({ data: categories })
