@@ -39,7 +39,7 @@ const safeMenuItem = (item) => ({
   _id: undefined,
 })
 
-export function createApiRouter({ db, auth }) {
+export function createApiRouter({ db, auth, stripe }) {
   const router = express.Router()
   const users = db.collection("user")
   const menuItems = db.collection("menuItems")
@@ -606,6 +606,46 @@ export function createApiRouter({ db, auth }) {
         totalTransactions,
       },
     })
+  })
+
+  router.get("/subscriptions/current", ...requireRole("vendor"), (request, response) => {
+    response.json({
+      data: {
+        plan: request.user.subscriptionPlan || "free",
+        expiresAt: request.user.subscriptionExpiresAt ?? null,
+      },
+    })
+  })
+
+  router.post("/subscriptions/checkout", ...requireRole("vendor"), async (request, response) => {
+    if (!stripe || !process.env.STRIPE_PRICE_ID) {
+      throw new ApiError(503, "Premium checkout is not configured.")
+    }
+
+    const expiresAt = request.user.subscriptionExpiresAt
+    if (
+      request.user.subscriptionPlan === "premium" &&
+      (!expiresAt || new Date(expiresAt).getTime() > Date.now())
+    ) {
+      throw new ApiError(409, "Your account already has an active Premium plan.")
+    }
+
+    const clientUrl = (process.env.CLIENT_URL || "http://localhost:3000")
+      .split(",")[0]
+      .trim()
+      .replace(/\/+$/, "")
+    const checkout = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      client_reference_id: request.user.id,
+      customer_email: request.user.email,
+      metadata: { vendorId: request.user.id },
+      subscription_data: { metadata: { vendorId: request.user.id } },
+      success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientUrl}/payment/cancel`,
+    })
+
+    response.json({ data: { url: checkout.url } })
   })
 
   router.get("/admin/users", ...requireRole("admin"), async (request, response) => {

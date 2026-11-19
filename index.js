@@ -4,6 +4,7 @@ import express from "express"
 import { toNodeHandler } from "better-auth/node"
 import { auth, db, mongoClient } from "./auth.js"
 import { createApiRouter } from "./api.js"
+import { createStripeWebhookHandler, stripe } from "./stripe.js"
 
 const app = express()
 const port = Number(process.env.PORT || 3001)
@@ -20,9 +21,14 @@ app.use(
   }),
 )
 
+app.post(
+  "/api/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  createStripeWebhookHandler({ db, stripeClient: stripe }),
+)
 app.all("/api/auth/{*path}", toNodeHandler(auth))
 app.use(express.json({ limit: "1mb" }))
-app.use("/api", createApiRouter({ db, auth }))
+app.use("/api", createApiRouter({ db, auth, stripe }))
 app.use("/api", (_request, response) => {
   response.status(404).json({ error: "API route not found." })
 })
@@ -57,6 +63,7 @@ const server = async () => {
     { stripeSessionId: 1 },
     { unique: true, sparse: true },
   )
+  await db.collection("webhookEvents").createIndex({ type: 1, processedAt: -1 })
 
   app.listen(port, () => {
     console.log(`Pizzora API is listening on port ${port}.`)
