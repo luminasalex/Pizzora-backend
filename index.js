@@ -85,3 +85,5 @@ process.on("SIGTERM", async () => {
   await mongoClient.close()
   process.exit(0)
 })
+
+export default app ;
