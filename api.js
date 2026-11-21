@@ -35,6 +35,9 @@ const isHttpsUrl = (value) => {
   }
 }
 const idFilter = (id) => {
+  if (id === undefined || id === null || id === "") {
+    return { _id: { $exists: false } }
+  }
   const clauses = [{ _id: id }, { id }]
   if (ObjectId.isValid(id)) clauses.push({ _id: new ObjectId(id) })
   return { $or: clauses }
@@ -91,7 +94,7 @@ export function createApiRouter({ db, auth, stripe }) {
       if (!user) throw new ApiError(401, "Invalid or expired authentication token.")
       if (user.isBlocked) throw new ApiError(403, "This account is blocked.")
 
-      request.user = user
+      request.user = { ...user, id: documentId(user) }
       next()
     } catch (error) {
       next(error)
@@ -568,8 +571,16 @@ export function createApiRouter({ db, auth, stripe }) {
     if (!item) throw new ApiError(404, "Menu item not found.")
 
     if (status === "approved") {
+      if (
+        (typeof item.vendorId !== "string" && !(item.vendorId instanceof ObjectId)) ||
+        !String(item.vendorId).trim()
+      ) {
+        throw new ApiError(409, "This menu item is missing its vendor association.")
+      }
       const vendor = await users.findOne(idFilter(item.vendorId))
-      if (!vendor || vendor.isBlocked) throw new ApiError(409, "Blocked or missing vendors cannot publish items.")
+      if (!vendor || vendor.role !== "vendor" || vendor.isBlocked) {
+        throw new ApiError(409, "Blocked or missing vendors cannot publish items.")
+      }
       if (vendor.subscriptionPlan !== "premium") {
         const activeCount = await menuItems.countDocuments({
           vendorId: item.vendorId,
