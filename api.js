@@ -278,6 +278,7 @@ export function createApiRouter({ db, auth, stripe }) {
   })
 
   router.get("/menu-items", async (request, response) => {
+    response.set("Cache-Control", "no-store")
     const { page, limit } = parsePagination(request.query)
     const vendors = await listEligibleVendors()
     const eligibleVendorIds = vendors.flatMap(vendorIdVariants)
@@ -304,7 +305,7 @@ export function createApiRouter({ db, auth, stripe }) {
     const sortBy =
       sort === "price_asc" ? { price: 1, _id: 1 } :
       sort === "price_desc" ? { price: -1, _id: 1 } :
-      { createdAt: -1, _id: -1 }
+      { approvedAt: -1, createdAt: -1, _id: -1 }
 
     const [records, total] = await Promise.all([
       menuItems
@@ -331,6 +332,7 @@ export function createApiRouter({ db, auth, stripe }) {
   })
 
   router.get("/menu-items/featured", async (_request, response) => {
+    response.set("Cache-Control", "no-store")
     const vendors = await listEligibleVendors()
     const eligibleVendorIds = vendors.flatMap(vendorIdVariants)
     const vendorById = new Map(
@@ -348,14 +350,17 @@ export function createApiRouter({ db, auth, stripe }) {
         availability: true,
         vendorId: { $in: eligibleVendorIds },
       })
-      .sort({ vendorId: 1, createdAt: -1 })
+      .sort({ approvedAt: -1, createdAt: -1, _id: -1 })
       .limit(30)
       .toArray()
     records.sort((left, right) => {
       const premiumDifference =
         Number(premiumIds.includes(String(right.vendorId))) -
         Number(premiumIds.includes(String(left.vendorId)))
-      return premiumDifference || right.createdAt - left.createdAt
+      const approvalTimeDifference =
+        new Date(right.approvedAt ?? right.createdAt).getTime() -
+        new Date(left.approvedAt ?? left.createdAt).getTime()
+      return approvalTimeDifference || premiumDifference
     })
 
     response.json({
@@ -489,7 +494,7 @@ export function createApiRouter({ db, auth, stripe }) {
     updates.updatedAt = new Date()
     const result = await menuItems.findOneAndUpdate(
       { _id: new ObjectId(request.params.id), vendorId: request.user.id },
-      { $set: updates, $setOnInsert: {} },
+      { $set: updates, $unset: { approvedAt: "" } },
       { returnDocument: "after" },
     )
     if (!result) throw new ApiError(404, "Menu item not found.")
@@ -577,10 +582,27 @@ export function createApiRouter({ db, auth, stripe }) {
       }
     }
 
+    const updatedAt = new Date()
     await menuItems.updateOne(
       { _id: item._id },
-      { $set: { status, updatedAt: new Date() } },
+      {
+        $set: {
+          status,
+          updatedAt,
+          ...(status === "approved" ? { approvedAt: updatedAt } : {}),
+        },
+        ...(status === "approved" ? {} : { $unset: { approvedAt: "" } }),
+      },
     )
+
+    // Increment cache-busting version so customer pages refetch approved items
+    try {
+      const currentVersion = Number(localStorage.getItem("pizzoraMenuApprovalVersion") || "0")
+      localStorage.setItem("pizzoraMenuApprovalVersion", String(currentVersion + 1))
+    } catch (e) {
+      // localStorage may not be available in all environments; ignore
+    }
+
     response.json({ data: { id: String(item._id), status } })
   })
 

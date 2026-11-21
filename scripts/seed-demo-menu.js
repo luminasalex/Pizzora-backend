@@ -6,24 +6,15 @@ if (!process.env.MONGODB_URI) {
 }
 
 const demoVendors = [
-  {
-    email: "demo.vendor1@pizzora.local",
-    name: "Pizza Roma",
-    businessName: "Pizza Roma",
-  },
-  {
-    email: "demo.vendor2@pizzora.local",
-    name: "Urban Crust",
-    businessName: "Urban Crust",
-  },
-  {
-    email: "demo.vendor3@pizzora.local",
-    name: "The Oven House",
-    businessName: "The Oven House",
-  },
+  ["roma-kitchen", "Roma Kitchen"],
+  ["urban-crust", "Urban Crust"],
+  ["oven-house", "The Oven House"],
+  ["green-slice", "Green Slice"],
+  ["ember-crust", "Ember & Crust"],
+  ["sweet-savory", "Sweet & Savory"],
 ]
 
-const demos = [
+const demoItems = [
   ["classic-margherita", "Classic Margherita", "Classic Pizzas", "Fresh tomato sauce, mozzarella and basil.", 650, "Dhanmondi, Dhaka", "https://images.unsplash.com/photo-1574071318508-1cdbab80d002?auto=format&fit=crop&w=900&q=85"],
   ["classic-pepperoni", "Pepperoni Feast", "Classic Pizzas", "Pepperoni, mozzarella and house tomato sauce.", 850, "Banani, Dhaka", "https://images.unsplash.com/photo-1628840042765-356cda07504e?auto=format&fit=crop&w=900&q=85"],
   ["classic-cheese", "Four Cheese Pizza", "Classic Pizzas", "Mozzarella, cheddar, parmesan and cream cheese.", 790, "Gulshan, Dhaka", "https://images.unsplash.com/photo-1579751626657-72bc17010498?auto=format&fit=crop&w=900&q=85"],
@@ -51,47 +42,43 @@ try {
   const db = client.db(process.env.DB_NAME || "Pizzora")
   const users = db.collection("user")
   const menuItems = db.collection("menuItems")
+  const now = new Date()
+  const vendors = []
 
-  let vendors = await users
-    .find({ role: "vendor", isBlocked: { $ne: true } })
-    .limit(6)
-    .toArray()
-
-  if (!vendors.length) {
-    const now = new Date()
-    const vendorIds = []
-
-    for (const vendor of demoVendors) {
-      const result = await users.updateOne(
-        { email: vendor.email },
-        {
-          $set: {
-            ...vendor,
-            emailVerified: true,
-            role: "vendor",
-            isBlocked: false,
-            subscriptionPlan: "premium",
-            updatedAt: now,
-          },
-          $setOnInsert: { createdAt: now },
+  for (const [slug, businessName] of demoVendors) {
+    const email = `demo-${slug}@pizzora-demo.invalid`
+    await users.updateOne(
+      { email },
+      {
+        $setOnInsert: {
+          name: businessName,
+          businessName,
+          email,
+          role: "vendor",
+          emailVerified: true,
+          isBlocked: false,
+          subscriptionPlan: "free",
+          createdAt: now,
         },
-        { upsert: true },
-      )
-
-      const record = await users.findOne({ email: vendor.email })
-      if (record) vendorIds.push(record)
-    }
-    vendors = vendorIds
+      },
+      { upsert: true },
+    )
+    const vendor = await users.findOne({ email })
+    if (!vendor) throw new Error(`Could not create demo vendor ${slug}.`)
+    vendors.push(vendor)
   }
 
-  const now = new Date()
   let inserted = 0
   let updated = 0
-
-  for (let index = 0; index < demos.length; index += 1) {
-    const [seedKey, itemName, category, description, price, location, image] = demos[index]
+  for (let index = 0; index < demoItems.length; index += 1) {
+    const [seedKey, itemName, category, description, price, location, image] =
+      demoItems[index]
     const vendor = vendors[index % vendors.length]
     const vendorId = String(vendor.id ?? vendor._id)
+    const existing = await menuItems.findOne(
+      { seedKey },
+      { projection: { approvedAt: 1 } },
+    )
     const result = await menuItems.updateOne(
       { seedKey },
       {
@@ -106,6 +93,7 @@ try {
           images: [image],
           status: "approved",
           availability: true,
+          approvedAt: existing?.approvedAt ?? now,
           updatedAt: now,
         },
         $setOnInsert: { createdAt: now },
@@ -116,7 +104,9 @@ try {
     updated += result.modifiedCount
   }
 
-  console.log(`Demo menu ready: ${demos.length} items (inserted ${inserted}, updated ${updated}).`)
+  console.log(
+    `Demo menu ready: ${demoItems.length} items across ${vendors.length} demo vendors (inserted ${inserted}, updated ${updated}).`,
+  )
 } finally {
   await client.close()
 }
