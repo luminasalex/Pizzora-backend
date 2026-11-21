@@ -21,6 +21,38 @@ app.use(
   }),
 )
 
+let initializationPromise
+const initialize = async () => {
+  if (!initializationPromise) {
+    initializationPromise = (async () => {
+      await mongoClient.connect()
+      await db.collection("menuItems").createIndex({ vendorId: 1 })
+      await db.collection("menuItems").createIndex({ status: 1, availability: 1 })
+      await db.collection("menuItems").createIndex({ category: 1 })
+      await db.collection("menuItems").createIndex({ location: 1 })
+      await db.collection("menuItems").createIndex({ price: 1 })
+      await db.collection("orders").createIndex(
+        { activeOrderKey: 1 },
+        { unique: true, sparse: true },
+      )
+      await db.collection("orders").createIndex({ customerId: 1, status: 1, createdAt: -1 })
+      await db.collection("orders").createIndex({ vendorId: 1, status: 1, createdAt: -1 })
+      await db.collection("transactions").createIndex(
+        { stripeSessionId: 1 },
+        { unique: true, sparse: true },
+      )
+      await db.collection("webhookEvents").createIndex({ type: 1, processedAt: -1 })
+    })()
+  }
+
+  return initializationPromise
+}
+
+app.use(async (_request, _response, next) => {
+  await initialize()
+  next()
+})
+
 app.post(
   "/api/webhooks/stripe",
   express.raw({ type: "application/json" }),
@@ -46,35 +78,19 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ error: "An unexpected server error occurred." })
 })
 
-const server = async () => {
-  await mongoClient.connect()
-  await db.collection("menuItems").createIndex({ vendorId: 1 })
-  await db.collection("menuItems").createIndex({ status: 1, availability: 1 })
-  await db.collection("menuItems").createIndex({ category: 1 })
-  await db.collection("menuItems").createIndex({ location: 1 })
-  await db.collection("menuItems").createIndex({ price: 1 })
-  await db.collection("orders").createIndex(
-    { activeOrderKey: 1 },
-    { unique: true, sparse: true },
-  )
-  await db.collection("orders").createIndex({ customerId: 1, status: 1, createdAt: -1 })
-  await db.collection("orders").createIndex({ vendorId: 1, status: 1, createdAt: -1 })
-  await db.collection("transactions").createIndex(
-    { stripeSessionId: 1 },
-    { unique: true, sparse: true },
-  )
-  await db.collection("webhookEvents").createIndex({ type: 1, processedAt: -1 })
-
-  app.listen(port, () => {
-    console.log(`Pizzora API is listening on port ${port}.`)
-  })
+if (!process.env.VERCEL) {
+  initialize()
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`Pizzora API is listening on port ${port}.`)
+      })
+    })
+    .catch(async (error) => {
+      console.error("Failed to start Pizzora API.", error)
+      await mongoClient.close()
+      process.exitCode = 1
+    })
 }
-
-server().catch(async (error) => {
-  console.error("Failed to start Pizzora API.", error)
-  await mongoClient.close()
-  process.exitCode = 1
-})
 
 process.on("SIGINT", async () => {
   await mongoClient.close()

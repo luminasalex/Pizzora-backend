@@ -87,6 +87,21 @@ Copy the CLI's webhook signing secret to `.env`. Customer pizza orders do not us
 
 ## Deployment
 
-Deploy the API to Render or another Node.js host. Configure MongoDB network access, production `CLIENT_URL` and `BETTER_AUTH_URL`, OAuth callback origins, Stripe webhook URL (`/api/webhooks/stripe`), and the server-only ImgBB key. Use a same-site domain or reverse proxy for reliable auth cookies.
+### Vercel
+
+The Express app is configured for Vercel serverless deployment. Import this `server` repository as a Vercel project and set these environment variables:
+
+- `MONGODB_URI`
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_URL=https://<your-api-domain>.vercel.app`
+- `CLIENT_URL=https://<your-client-domain>`
+- `NODE_ENV=production`
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_ID` when billing is enabled
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` for Google OAuth
+- `IMGBB_API_KEY` for server-side image uploads
+
+Set the Stripe webhook endpoint to `https://<your-api-domain>.vercel.app/api/webhooks/stripe`. Allow Vercel's network access to MongoDB Atlas (or allow database network access for serverless IP egress). The project includes `vercel.json`, which routes all requests to the Express app.
+
+For a Render or other Node.js deployment, configure MongoDB network access, production `CLIENT_URL` and `BETTER_AUTH_URL`, OAuth callback origins, Stripe webhook URL (`/api/webhooks/stripe`), and the server-only ImgBB key. Use a same-site domain or reverse proxy for reliable auth cookies.
 
 Do not commit `.env` or publish server credentials.
