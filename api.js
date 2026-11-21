@@ -9,6 +9,7 @@ const categories = [
   "Sides & Appetizers",
   "Beverages & Desserts",
 ]
+const FREE_MENU_ITEM_LIMIT = 2
 
 const categoryAliases = {
   "Specialty & Gourmet Pizzas": "Specialty / Gourmet Pizzas",
@@ -434,6 +435,20 @@ export function createApiRouter({ db, auth, stripe }) {
       throw new ApiError(400, "Please provide valid menu item details and HTTPS image URLs.")
     }
 
+    if (request.user.subscriptionPlan !== "premium") {
+      const currentListings = await menuItems.countDocuments({
+        vendorId: request.user.id,
+        availability: true,
+        status: { $in: ["pending", "approved"] },
+      })
+      if (currentListings >= FREE_MENU_ITEM_LIMIT) {
+        throw new ApiError(
+          409,
+          "The Free plan allows up to 2 menu listings, including items awaiting review. Upgrade to Premium to add more.",
+        )
+      }
+    }
+
     const now = new Date()
     const item = {
       vendorId: request.user.id,
@@ -530,8 +545,8 @@ export function createApiRouter({ db, auth, stripe }) {
         status: "approved",
         availability: true,
       })
-      if (activeCount >= 3 && !item.availability) {
-        throw new ApiError(409, "Free vendors can have at most 3 active menu items.")
+      if (activeCount >= FREE_MENU_ITEM_LIMIT && !item.availability) {
+        throw new ApiError(409, "The Free plan allows up to 2 active menu items. Upgrade to Premium for more.")
       }
     }
 
@@ -587,8 +602,15 @@ export function createApiRouter({ db, auth, stripe }) {
           status: "approved",
           availability: true,
         })
-        if (item.availability && item.status !== "approved" && activeCount >= 3) {
-          throw new ApiError(409, "This vendor has reached the 3-item free plan limit.")
+        if (
+          item.availability &&
+          item.status !== "approved" &&
+          activeCount >= FREE_MENU_ITEM_LIMIT
+        ) {
+          throw new ApiError(
+            409,
+            "The Free plan allows up to 2 active menu items. Upgrade to Premium for more.",
+          )
         }
       }
     }
