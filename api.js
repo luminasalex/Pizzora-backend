@@ -10,6 +10,14 @@ const categories = [
   "Beverages & Desserts",
 ]
 
+const categoryAliases = {
+  "Specialty & Gourmet Pizzas": "Specialty / Gourmet Pizzas",
+  "Specialty & Gourmet": "Specialty / Gourmet Pizzas",
+  "Specialty / Gourmet": "Specialty / Gourmet Pizzas",
+  "Drinks & Desserts": "Beverages & Desserts",
+  "Sides & More": "Sides & Appetizers",
+}
+
 class ApiError extends Error {
   constructor(status, message) {
     super(message)
@@ -32,6 +40,17 @@ const idFilter = (id) => {
   return { $or: clauses }
 }
 const documentId = (document) => String(document.id ?? document._id)
+const vendorIdVariants = (vendor) => {
+  const variants = [vendor.id, String(vendor._id), vendor._id]
+  if (vendor.id && ObjectId.isValid(vendor.id)) {
+    variants.push(new ObjectId(vendor.id))
+  }
+  return [...new Set(variants.filter((value) => value !== undefined && value !== null))]
+}
+const categoryVariants = (category) => {
+  const normalized = categoryAliases[category] ?? category
+  return [...new Set([category, normalized])]
+}
 const parsePagination = (query) => {
   const page = Number.parseInt(query.page ?? "1", 10)
   const limit = Number.parseInt(query.limit ?? "12", 10)
@@ -261,10 +280,11 @@ export function createApiRouter({ db, auth, stripe }) {
   router.get("/menu-items", async (request, response) => {
     const { page, limit } = parsePagination(request.query)
     const vendors = await listEligibleVendors()
+    const eligibleVendorIds = vendors.flatMap(vendorIdVariants)
     const filter = {
       status: "approved",
       availability: true,
-      vendorId: { $in: vendors.map((vendor) => vendor.id) },
+      vendorId: { $in: eligibleVendorIds },
     }
     const search = String(request.query.search ?? request.query.q ?? "").trim()
     const category = String(request.query.category ?? "").trim()
@@ -275,7 +295,7 @@ export function createApiRouter({ db, auth, stripe }) {
       const expression = new RegExp(escapeRegex(search), "i")
       filter.itemName = expression
     }
-    if (category) filter.category = category
+    if (category) filter.category = { $in: categoryVariants(category) }
     if (location) filter.location = new RegExp(escapeRegex(location), "i")
     if (sort && !["price_asc", "price_desc"].includes(sort)) {
       throw new ApiError(400, "Invalid sort option.")
@@ -295,12 +315,16 @@ export function createApiRouter({ db, auth, stripe }) {
         .toArray(),
       menuItems.countDocuments(filter),
     ])
-    const vendorById = new Map(vendors.map((vendor) => [vendor.id, vendor]))
+    const vendorById = new Map(
+      vendors.flatMap((vendor) =>
+        vendorIdVariants(vendor).map((vendorId) => [String(vendorId), vendor]),
+      ),
+    )
 
     response.json({
       data: records.map((item) => ({
         ...safeMenuItem(item),
-        vendor: vendorById.get(item.vendorId) ?? null,
+        vendor: vendorById.get(String(item.vendorId)) ?? null,
       })),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })
@@ -308,7 +332,12 @@ export function createApiRouter({ db, auth, stripe }) {
 
   router.get("/menu-items/featured", async (_request, response) => {
     const vendors = await listEligibleVendors()
-    const vendorById = new Map(vendors.map((vendor) => [vendor.id, vendor]))
+    const eligibleVendorIds = vendors.flatMap(vendorIdVariants)
+    const vendorById = new Map(
+      vendors.flatMap((vendor) =>
+        vendorIdVariants(vendor).map((vendorId) => [String(vendorId), vendor]),
+      ),
+    )
     const premiumIds = vendors
       .filter((vendor) => vendor.subscriptionPlan === "premium")
       .map((vendor) => vendor.id)
@@ -317,22 +346,22 @@ export function createApiRouter({ db, auth, stripe }) {
       .find({
         status: "approved",
         availability: true,
-        vendorId: { $in: vendors.map((vendor) => vendor.id) },
+        vendorId: { $in: eligibleVendorIds },
       })
       .sort({ vendorId: 1, createdAt: -1 })
       .limit(30)
       .toArray()
     records.sort((left, right) => {
       const premiumDifference =
-        Number(premiumIds.includes(right.vendorId)) -
-        Number(premiumIds.includes(left.vendorId))
+        Number(premiumIds.includes(String(right.vendorId))) -
+        Number(premiumIds.includes(String(left.vendorId)))
       return premiumDifference || right.createdAt - left.createdAt
     })
 
     response.json({
       data: records.slice(0, 6).map((item) => ({
         ...safeMenuItem(item),
-        vendor: vendorById.get(item.vendorId) ?? null,
+        vendor: vendorById.get(String(item.vendorId)) ?? null,
       })),
     })
   })
