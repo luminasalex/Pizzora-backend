@@ -9,7 +9,7 @@ const categories = [
   "Sides & Appetizers",
   "Beverages & Desserts",
 ]
-const FREE_MENU_ITEM_LIMIT = 2
+const FREE_MENU_ITEM_LIMIT = 3
 
 const categoryAliases = {
   "Specialty & Gourmet Pizzas": "Specialty / Gourmet Pizzas",
@@ -365,7 +365,7 @@ export function createApiRouter({ db, auth, stripe }) {
       const approvalTimeDifference =
         new Date(right.approvedAt ?? right.createdAt).getTime() -
         new Date(left.approvedAt ?? left.createdAt).getTime()
-      return approvalTimeDifference || premiumDifference
+      return premiumDifference || approvalTimeDifference
     })
 
     response.json({
@@ -440,12 +440,12 @@ export function createApiRouter({ db, auth, stripe }) {
       const currentListings = await menuItems.countDocuments({
         vendorId: request.user.id,
         availability: true,
-        status: { $in: ["pending", "approved"] },
+        status: "approved",
       })
       if (currentListings >= FREE_MENU_ITEM_LIMIT) {
         throw new ApiError(
           409,
-          "The Free plan allows up to 2 menu listings, including items awaiting review. Upgrade to Premium to add more.",
+          "The Free plan allows up to 3 active menu items. Pause an active item or upgrade to Premium to add more.",
         )
       }
     }
@@ -547,7 +547,7 @@ export function createApiRouter({ db, auth, stripe }) {
         availability: true,
       })
       if (activeCount >= FREE_MENU_ITEM_LIMIT && !item.availability) {
-        throw new ApiError(409, "The Free plan allows up to 2 active menu items. Upgrade to Premium for more.")
+        throw new ApiError(409, "The Free plan allows up to 3 active menu items. Pause another item or upgrade to Premium for more.")
       }
     }
 
@@ -560,9 +560,26 @@ export function createApiRouter({ db, auth, stripe }) {
   router.get("/admin/menu-items", ...requireRole("admin"), async (request, response) => {
     const { page, limit } = parsePagination(request.query)
     const filter = {}
-    if (request.query.status) filter.status = String(request.query.status)
-    if (request.query.category) filter.category = String(request.query.category)
+    const status = String(request.query.status ?? "")
+    const category = String(request.query.category ?? "")
+    const search = String(request.query.search ?? "").trim()
+    if (status) {
+      if (!["pending", "approved", "rejected", "inactive"].includes(status)) {
+        throw new ApiError(400, "Invalid menu item status filter.")
+      }
+      filter.status = status
+    }
+    if (category) {
+      if (!categories.includes(category)) {
+        throw new ApiError(400, "Invalid menu category filter.")
+      }
+      filter.category = category
+    }
     if (request.query.vendorId) filter.vendorId = String(request.query.vendorId)
+    if (search) {
+      if (search.length > 100) throw new ApiError(400, "Menu search is too long.")
+      filter.itemName = new RegExp(escapeRegex(search), "i")
+    }
     const [records, total] = await Promise.all([
       menuItems
         .find(filter)
@@ -572,8 +589,31 @@ export function createApiRouter({ db, auth, stripe }) {
         .toArray(),
       menuItems.countDocuments(filter),
     ])
+    const vendorIds = [...new Set(records.map((item) => item.vendorId))]
+    const vendorRecords = vendorIds.length
+      ? await users
+          .find({ $or: vendorIds.map((id) => idFilter(id)) })
+          .project({ name: 1, businessName: 1, _id: 1, id: 1 })
+          .toArray()
+      : []
+    const vendorById = new Map(
+      vendorRecords.flatMap((vendor) =>
+        vendorIdVariants(vendor).map((id) => [String(id), vendor]),
+      ),
+    )
     response.json({
-      data: records.map(safeMenuItem),
+      data: records.map((item) => {
+        const vendor = vendorById.get(String(item.vendorId))
+        return {
+          ...safeMenuItem(item),
+          vendor: vendor
+            ? {
+                id: documentId(vendor),
+                name: vendor.businessName || vendor.name,
+              }
+            : null,
+        }
+      }),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })
   })
@@ -610,7 +650,7 @@ export function createApiRouter({ db, auth, stripe }) {
         ) {
           throw new ApiError(
             409,
-            "The Free plan allows up to 2 active menu items. Upgrade to Premium for more.",
+            "The Free plan allows up to 3 active menu items. Upgrade to Premium for more.",
           )
         }
       }
@@ -628,14 +668,6 @@ export function createApiRouter({ db, auth, stripe }) {
         ...(status === "approved" ? {} : { $unset: { approvedAt: "" } }),
       },
     )
-
-    // Increment cache-busting version so customer pages refetch approved items
-    try {
-      const currentVersion = Number(localStorage.getItem("pizzoraMenuApprovalVersion") || "0")
-      localStorage.setItem("pizzoraMenuApprovalVersion", String(currentVersion + 1))
-    } catch (e) {
-      // localStorage may not be available in all environments; ignore
-    }
 
     response.json({ data: { id: String(item._id), status } })
   })
@@ -913,7 +945,12 @@ export function createApiRouter({ db, auth, stripe }) {
     const { page, limit } = parsePagination(request.query)
     const filter = {}
     const role = String(request.query.role ?? "")
-    if (role && ["customer", "vendor", "admin"].includes(role)) filter.role = role
+    if (role) {
+      if (!["customer", "vendor", "admin"].includes(role)) {
+        throw new ApiError(400, "Invalid user role filter.")
+      }
+      filter.role = role
+    }
     const search = String(request.query.search ?? "").trim()
     if (search) {
       const expression = new RegExp(escapeRegex(search), "i")
@@ -969,11 +1006,31 @@ export function createApiRouter({ db, auth, stripe }) {
         .toArray(),
       transactions.countDocuments({}),
     ])
+    const vendorIds = [...new Set(records.map((transaction) => transaction.vendorId))]
+    const vendorRecords = vendorIds.length
+      ? await users
+          .find({ $or: vendorIds.map((id) => idFilter(id)) })
+          .project({ name: 1, businessName: 1, _id: 1, id: 1 })
+          .toArray()
+      : []
+    const vendorById = new Map(
+      vendorRecords.flatMap((vendor) =>
+        vendorIdVariants(vendor).map((id) => [String(id), vendor]),
+      ),
+    )
     response.json({
       data: records.map((transaction) => ({
         ...transaction,
         id: String(transaction._id),
         _id: undefined,
+        vendor: vendorById.has(String(transaction.vendorId))
+          ? {
+              id: documentId(vendorById.get(String(transaction.vendorId))),
+              name:
+                vendorById.get(String(transaction.vendorId)).businessName ||
+                vendorById.get(String(transaction.vendorId)).name,
+            }
+          : null,
       })),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })

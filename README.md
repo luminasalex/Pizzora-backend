@@ -2,6 +2,13 @@
 
 Express 5 API for Pizzora. It uses the MongoDB Native Driver and hosts Better Auth so that authentication, authorization, menu, order, profile, and subscription rules are enforced server-side. Better Auth's JWT plugin issues short-lived, signed access tokens; protected Express routes verify Bearer tokens and load current user roles and status from MongoDB.
 
+## Technology
+
+- `express`, `mongodb`, and `dotenv`
+- `better-auth` with `@better-auth/mongo-adapter` and the JWT plugin
+- `stripe` for vendor Premium subscriptions; `cors` for the configured client origin
+- Premium vendors can publish unlimited active items; Free vendors can publish up to 3 active items.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -83,7 +90,14 @@ Configure `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. F
 stripe listen --forward-to localhost:3001/api/webhooks/stripe
 ```
 
-Copy the CLI's webhook signing secret to `.env`. Customer pizza orders do not use Stripe Checkout.
+Forward to the port the API is actually listening on (`3001` by default; use `5000` when `PORT=5000`). Copy the CLI's webhook signing secret to `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the API. Keep the listener running while testing and complete a new checkout after it starts. Customer pizza orders do not use Stripe Checkout.
+
+## Submission links
+
+- Live website: https://pizzora-client-ten.vercel.app/
+- Live API URL: Not provided
+- Client GitHub repository: Not configured in this workspace
+- API repository: https://github.com/luminasalex/-Pizzora-backend
 
 ## Deployment
 
