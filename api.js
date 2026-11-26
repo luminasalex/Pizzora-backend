@@ -23,6 +23,7 @@ class ApiError extends Error {
   constructor(status, message) {
     super(message)
     this.status = status
+    this.isOperational = true
   }
 }
 
@@ -845,16 +846,42 @@ export function createApiRouter({ db, auth, stripe }) {
       .split(",")[0]
       .trim()
       .replace(/\/+$/, "")
-    const checkout = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-      client_reference_id: request.user.id,
-      customer_email: request.user.email,
-      metadata: { vendorId: request.user.id },
-      subscription_data: { metadata: { vendorId: request.user.id } },
-      success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${clientUrl}/payment/cancel`,
-    })
+    let premiumPrice
+    try {
+      premiumPrice = await stripe.prices.retrieve(process.env.STRIPE_PRICE_ID)
+    } catch (error) {
+      console.error("Could not retrieve the configured Stripe Premium price.", error)
+      throw new ApiError(
+        503,
+        "The configured Premium price could not be found. Check STRIPE_PRICE_ID and make sure it uses the same Stripe mode as STRIPE_SECRET_KEY.",
+      )
+    }
+    if (premiumPrice.type !== "recurring" || !premiumPrice.recurring) {
+      throw new ApiError(
+        503,
+        "STRIPE_PRICE_ID must refer to a recurring Stripe Price. Create a recurring Premium price in Stripe and update the server configuration.",
+      )
+    }
+
+    let checkout
+    try {
+      checkout = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+        client_reference_id: request.user.id,
+        customer_email: request.user.email,
+        metadata: { vendorId: request.user.id },
+        subscription_data: { metadata: { vendorId: request.user.id } },
+        success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${clientUrl}/payment/cancel`,
+      })
+    } catch (error) {
+      console.error("Stripe subscription checkout session creation failed.", error)
+      throw new ApiError(
+        502,
+        "Stripe checkout could not be started. Check the server Stripe key and recurring Premium price configuration.",
+      )
+    }
 
     response.json({ data: { url: checkout.url } })
   })

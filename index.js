@@ -75,7 +75,15 @@ app.get("/health", (_request, response) => {
 
 app.use((error, _request, response, _next) => {
   console.error(error)
-  response.status(500).json({ error: "An unexpected server error occurred." })
+  const status =
+    Number.isInteger(error?.status) && error.status >= 400 && error.status < 600
+      ? error.status
+      : 500
+  const message =
+    error?.isOperational && typeof error.message === "string"
+      ? error.message
+      : "An unexpected server error occurred."
+  response.status(status).json({ error: message })
 })
 
 if (!process.env.VERCEL) {
